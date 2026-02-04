@@ -7,6 +7,32 @@ interface Coordinates {
   y: number;
 }
 
+// Drawing options: stroke color (default white), stroke width, opacity
+const STROKE_COLORS = [
+  { name: "white", value: "#ffffff" },
+  { name: "red", value: "#c0392b" },
+  { name: "green", value: "#27ae60" },
+  { name: "blue", value: "#2980b9" },
+  { name: "orange", value: "#e67e22" },
+] as const;
+const DEFAULT_BG = "#1a2622";
+const STROKE_WIDTHS = [
+  { name: "thin", value: 1.5 },
+  { name: "medium", value: 3 },
+  { name: "thick", value: 6 },
+] as const;
+
+const MAX_UNDO = 50;
+
+function hexToRgba(hex: string, alpha: number): string {
+  const m = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+  if (!m) return `rgba(0,0,0,${alpha})`;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 const SCRATCH_FILES = [
   "scratch-tap",
   "scratch-start",
@@ -25,6 +51,20 @@ export default function ChalkboardBliss() {
   const [imageLoaded, setImageLoaded] = useState<boolean>(false);
   const [audioReady, setAudioReady] = useState<boolean>(false);
   const fillIntervalRef = useRef<number | null>(null);
+
+  // Drawing controls (stroke color, width, opacity)
+  const [strokeColor, setStrokeColor] = useState<string>(STROKE_COLORS[0].value); // default white
+  const [strokeWidth, setStrokeWidth] = useState<number>(STROKE_WIDTHS[1].value);
+  const [opacity, setOpacity] = useState<number>(100);
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const undoStackRef = useRef<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
   const lastAngleRef = useRef<number | null>(null);
   const straightScoreRef = useRef<number>(0);
   const usingStraightRef = useRef<boolean>(false);
@@ -201,25 +241,51 @@ export default function ChalkboardBliss() {
     };
     img.onerror = () => resizeCanvas();
 
+    const drawBg = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      // Draw background color first
+      ctx.fillStyle = DEFAULT_BG;
+      ctx.fillRect(0, 0, w, h);
+      
+      if (bgImageRef.current) {
+        const img = bgImageRef.current;
+        
+        // Ensure image dimensions are valid
+        if (img.width > 0 && img.height > 0) {
+          // Fill full width, maintain aspect ratio
+          const scale = w / img.width;
+          const scaledWidth = w;
+          const scaledHeight = img.height * scale;
+          
+          // Center vertically if height is less than canvas, or crop from top
+          const y = scaledHeight >= h ? (h - scaledHeight) / 2 : 0;
+          
+          // Use image smoothing for better quality
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          
+          // Draw image filling full width
+          ctx.drawImage(img, 0, y, scaledWidth, scaledHeight);
+        }
+      }
+    };
+
     const resizeCanvas = () => {
       const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * window.devicePixelRatio;
-      canvas.height = rect.height * window.devicePixelRatio;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+      // Draw background at device pixel resolution to avoid pixelation
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBg(ctx, canvas.width, canvas.height);
+      ctx.restore();
 
-      if (bgImageRef.current) {
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height);
-        ctx.restore();
-      } else {
-        ctx.fillStyle = "#1a2622";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
+      // Scale context for drawing operations
+      ctx.scale(dpr, dpr);
     };
 
     resizeCanvas();
@@ -231,6 +297,112 @@ export default function ChalkboardBliss() {
       ro.disconnect();
     };
   }, [imageLoaded]);
+
+  // Keep refs in sync for use in handlers
+  useEffect(() => {
+    undoStackRef.current = undoStack;
+  }, [undoStack]);
+  useEffect(() => {
+    redoStackRef.current = redoStack;
+  }, [redoStack]);
+
+  const saveToHistory = (): void => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const data = canvas.toDataURL("image/png");
+    const next = [...undoStackRef.current, data].slice(-MAX_UNDO);
+    undoStackRef.current = next;
+    setUndoStack(next);
+    // Clear redo stack when new action is performed
+    redoStackRef.current = [];
+    setRedoStack([]);
+  };
+
+  const undo = (): void => {
+    const stack = undoStackRef.current;
+    if (stack.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    
+    // Save current state to redo stack before undoing
+    const currentState = canvas.toDataURL("image/png");
+    const nextRedo = [...redoStackRef.current, currentState].slice(-MAX_UNDO);
+    redoStackRef.current = nextRedo;
+    setRedoStack(nextRedo);
+    
+    const prev = stack[stack.length - 1];
+    const img = new Image();
+    img.onload = () => {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      const next = stack.slice(0, -1);
+      undoStackRef.current = next;
+      setUndoStack(next);
+    };
+    img.src = prev;
+  };
+
+  const redo = (): void => {
+    const stack = redoStackRef.current;
+    if (stack.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    
+    // Save current state to undo stack before redoing
+    const currentState = canvas.toDataURL("image/png");
+    const nextUndo = [...undoStackRef.current, currentState].slice(-MAX_UNDO);
+    undoStackRef.current = nextUndo;
+    setUndoStack(nextUndo);
+    
+    const next = stack[stack.length - 1];
+    const img = new Image();
+    img.onload = () => {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      const nextRedo = stack.slice(0, -1);
+      redoStackRef.current = nextRedo;
+      setRedoStack(nextRedo);
+    };
+    img.src = next;
+  };
+
+  const drawBackground = (ctx: CanvasRenderingContext2D, w: number, h: number): void => {
+    // Draw background color first
+    ctx.fillStyle = DEFAULT_BG;
+    ctx.fillRect(0, 0, w, h);
+    
+    if (bgImageRef.current) {
+      const img = bgImageRef.current;
+      
+      // Ensure image dimensions are valid
+      if (img.width > 0 && img.height > 0) {
+        // Fill full width, maintain aspect ratio
+        const scale = w / img.width;
+        const scaledWidth = w;
+        const scaledHeight = img.height * scale;
+        
+        // Center vertically if height is less than canvas, or crop from top
+        const y = scaledHeight >= h ? (h - scaledHeight) / 2 : 0;
+        
+        // Use image smoothing for better quality
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        
+        // Draw image filling full width
+        ctx.drawImage(img, 0, y, scaledWidth, scaledHeight);
+      }
+    }
+  };
 
   const playTapSound = (): void => {
     if (!tabVisibleRef.current) return;
@@ -315,6 +487,12 @@ export default function ChalkboardBliss() {
     const { x, y } = getCoordinates(e);
     if (!isInDrawableArea(x, y)) return;
 
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Save current state for undo (before this stroke)
+    saveToHistory();
+
     const now = performance.now();
 
     // Increment session counter to track unique drawing sessions
@@ -330,9 +508,6 @@ export default function ChalkboardBliss() {
     lastPosRef.current = { x, y };
     lastTimeRef.current = now;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
     const pointerId = (e.nativeEvent as PointerEvent).pointerId;
     if (typeof pointerId === "number" && canvas.setPointerCapture) {
       canvas.setPointerCapture(pointerId);
@@ -347,16 +522,18 @@ export default function ChalkboardBliss() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Draw tap dot in buffer pixel space so size is always 2 CSS pixels (no scale/zoom variance)
     const dpr = window.devicePixelRatio || 1;
-    const radiusBuffer = 2 * dpr; // 2 CSS pixels
+    const radiusBuffer = 2 * dpr;
     const cx = x * dpr;
     const cy = y * dpr;
+
+    const alpha = opacity / 100;
+    const fillRgba = hexToRgba(strokeColor, alpha * 0.9);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.beginPath();
     ctx.arc(cx, cy, radiusBuffer, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+    ctx.fillStyle = fillRgba;
     ctx.fill();
     ctx.restore();
     // Start stroke path in logical space so draw() lineTo is correct
@@ -424,15 +601,15 @@ export default function ChalkboardBliss() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.lineWidth = 3;
+      const alpha = opacity / 100;
+      ctx.strokeStyle = hexToRgba(strokeColor, alpha * 0.9);
+      ctx.lineWidth = strokeWidth;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-
       ctx.lineTo(x, y);
       ctx.stroke();
 
-      // Chalk dust particles (fixed size so marks look consistent)
+      // Chalk dust particles
       if (distance > 2) {
         const particles = Math.floor(distance / 3);
         const particleSize = 1.2;
@@ -440,11 +617,9 @@ export default function ChalkboardBliss() {
           const t = i / particles;
           const px = lastPosRef.current.x + (x - lastPosRef.current.x) * t;
           const py = lastPosRef.current.y + (y - lastPosRef.current.y) * t;
-
           const offsetX = (Math.random() - 0.5) * 3;
           const offsetY = (Math.random() - 0.5) * 3;
-
-          ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.3})`;
+          ctx.fillStyle = hexToRgba(strokeColor, (Math.random() * 0.3 * alpha));
           ctx.fillRect(px + offsetX, py + offsetY, particleSize, particleSize);
         }
       }
@@ -523,25 +698,101 @@ export default function ChalkboardBliss() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    saveToHistory();
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Draw background at device pixel resolution to avoid pixelation
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (bgImageRef.current) {
-      ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height);
-    } else {
-      ctx.fillStyle = "#1a2622";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
+    drawBackground(ctx, canvas.width, canvas.height);
     ctx.restore();
   };
+
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+
+  // Initialize toolbar position and detect mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      // Position at top center for both mobile and desktop
+      setTimeout(() => {
+        const toolbar = toolbarRef.current;
+        if (toolbar) {
+          setToolbarPosition({
+            x: (window.innerWidth - toolbar.offsetWidth) / 2,
+            y: 20,
+          });
+        } else {
+          // Fallback if toolbar not rendered yet
+          setToolbarPosition({
+            x: (window.innerWidth - 300) / 2,
+            y: 20,
+          });
+        }
+      }, 100);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, [showSettings]);
+
+  useEffect(() => {
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      if (!isDragging) return;
+      e.preventDefault();
+      const newX = e.clientX - dragOffset.x;
+      const newY = e.clientY - dragOffset.y;
+
+      // Constrain to viewport
+      const toolbar = toolbarRef.current;
+      if (toolbar) {
+        const maxX = window.innerWidth - toolbar.offsetWidth;
+        const maxY = window.innerHeight - toolbar.offsetHeight;
+
+        setToolbarPosition({
+          x: Math.max(0, Math.min(newX, maxX)),
+          y: Math.max(0, Math.min(newY, maxY)),
+        });
+      }
+    };
+
+    const handleGlobalPointerUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      window.addEventListener("pointermove", handleGlobalPointerMove);
+      window.addEventListener("pointerup", handleGlobalPointerUp);
+      return () => {
+        window.removeEventListener("pointermove", handleGlobalPointerMove);
+        window.removeEventListener("pointerup", handleGlobalPointerUp);
+      };
+    }
+  }, [isDragging, dragOffset]);
+
+  const handleToolbarDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Draggable on all screen sizes
+    e.preventDefault();
+    setIsDragging(true);
+    const rect = toolbarRef.current?.getBoundingClientRect();
+    if (rect) {
+      setDragOffset({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    }
+  };
+
+  const handleToolbarDragEnd = () => {
+    setIsDragging(false);
+  };
   return (
-    <div className="w-full h-screen flex flex-col bg-gray-900">
-      <div className="bg-gray-800 p-4 shadow-lg flex items-center justify-between">
+    <div className="w-full h-screen flex flex-col bg-gray-900 relative overflow-hidden">
+      {/* Header - hidden on mobile */}
+      <div className="hidden md:flex bg-gray-800 p-4 shadow-lg items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Blackboard</h1>
         <div className="flex items-center gap-4">
           {!audioReady && (
@@ -556,11 +807,15 @@ export default function ChalkboardBliss() {
         </div>
       </div>
 
-      <div className="flex-1 p-4">
+      {/* Canvas - full screen */}
+      <div className="flex-1 w-full h-full relative">
         <canvas
           ref={canvasRef}
-          className="w-full h-full rounded-lg shadow-2xl cursor-crosshair touch-none"
-          style={{ backgroundColor: "#1a2622" }}
+          className="w-full h-full touch-none"
+          style={{
+            backgroundColor: DEFAULT_BG,
+            cursor: "crosshair",
+          }}
           onPointerDown={startDrawing}
           onPointerMove={draw}
           onPointerUp={stopDrawing}
@@ -568,7 +823,190 @@ export default function ChalkboardBliss() {
         />
       </div>
 
-      <div className="bg-gray-800 p-3 text-center text-sm text-gray-400">
+      {/* Unified Toolbar - Draggable on all screens */}
+      <div
+        ref={toolbarRef}
+        className="fixed bg-white rounded-xl md:rounded-2xl shadow-2xl p-2 md:p-4 z-50 cursor-move"
+        style={{
+          left: `${toolbarPosition.x}px`,
+          top: `${toolbarPosition.y}px`,
+          transform: "none",
+        }}
+        onPointerDown={handleToolbarDragStart}
+        onPointerUp={handleToolbarDragEnd}
+        onPointerCancel={handleToolbarDragEnd}
+      >
+        <div className="flex items-center gap-1.5 md:gap-3">
+          {/* Color buttons */}
+          <div className="flex gap-1 md:gap-2">
+            {STROKE_COLORS.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setStrokeColor(c.value);
+                }}
+                className={`w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg border-2 transition-all ${
+                  strokeColor === c.value
+                    ? "border-blue-500 scale-110 shadow-md"
+                    : "border-gray-200 hover:border-gray-300"
+                } ${c.value === "#ffffff" ? "border-gray-300" : ""}`}
+                style={{ backgroundColor: c.value }}
+                title={c.name}
+              />
+            ))}
+          </div>
+
+          {/* Divider */}
+          <div className="w-px h-6 md:h-8 bg-gray-200" />
+
+          {/* Settings button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSettings(!showSettings);
+            }}
+            className={`w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg flex items-center justify-center transition-colors ${
+              showSettings
+                ? "bg-blue-500 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+            title="Settings"
+          >
+            <svg
+              className="w-4 h-4 md:w-6 md:h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+              />
+            </svg>
+          </button>
+
+          {/* Undo/Redo buttons */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              undo();
+            }}
+            disabled={undoStack.length === 0}
+            className="w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Undo"
+          >
+            <svg
+              className="w-4 h-4 md:w-6 md:h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              redo();
+            }}
+            disabled={redoStack.length === 0}
+            className="w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Redo"
+          >
+            <svg
+              className="w-4 h-4 md:w-6 md:h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="mt-2 md:mt-4 pt-2 md:pt-4 border-t border-gray-200 space-y-2 md:space-y-4">
+            <div>
+              <p className="text-[10px] md:text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 md:mb-2">
+                Stroke width
+              </p>
+              <div className="flex gap-1.5 md:gap-2">
+                {STROKE_WIDTHS.map((w) => (
+                  <button
+                    key={w.name}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStrokeWidth(w.value);
+                    }}
+                    className={`flex-1 flex items-center justify-center rounded-md md:rounded-lg border-2 h-7 md:h-9 transition-all ${
+                      strokeWidth === w.value
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                    title={w.name}
+                  >
+                    <span
+                      className="rounded-full bg-gray-700"
+                      style={{
+                        width: Math.max(2, w.value * 2),
+                        height: w.value,
+                      }}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] md:text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 md:mb-2">
+                Opacity
+              </p>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={opacity}
+                onChange={(e) => setOpacity(Number(e.target.value))}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full h-1.5 md:h-2 rounded-full appearance-none bg-gray-200 accent-blue-500"
+              />
+              <p className="text-[10px] md:text-xs text-gray-500 mt-0.5">{opacity}%</p>
+            </div>
+            <div className="md:hidden">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearCanvas();
+                }}
+                className="w-full px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors text-xs font-medium"
+              >
+                Clear Board
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer - hidden on mobile */}
+      <div className="hidden md:block bg-gray-800 p-3 text-center text-sm text-gray-400">
         By Ammar Hassan
       </div>
     </div>
