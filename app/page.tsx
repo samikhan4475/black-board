@@ -251,12 +251,11 @@ export default function ChalkboardBliss() {
         
         // Ensure image dimensions are valid
         if (img.width > 0 && img.height > 0) {
-          // Fill full width and height - stretch to fit canvas exactly
           // Use image smoothing for better quality
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
           
-          // Draw image filling entire canvas (stretch to fit)
+          // Both mobile and web: stretch to fill entire canvas
           ctx.drawImage(img, 0, 0, w, h);
         }
       }
@@ -379,12 +378,11 @@ export default function ChalkboardBliss() {
       
       // Ensure image dimensions are valid
       if (img.width > 0 && img.height > 0) {
-        // Fill full width and height - stretch to fit canvas exactly
         // Use image smoothing for better quality
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         
-        // Draw image filling entire canvas (stretch to fit)
+        // Both mobile and web: stretch to fill entire canvas
         ctx.drawImage(img, 0, 0, w, h);
       }
     }
@@ -779,22 +777,6 @@ export default function ChalkboardBliss() {
   };
   return (
     <div className="w-full h-screen flex flex-col bg-gray-900 relative overflow-hidden">
-      {/* Header - hidden on mobile */}
-      <div className="hidden md:flex bg-gray-800 p-4 shadow-lg items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Blackboard</h1>
-        <div className="flex items-center gap-4">
-          {!audioReady && (
-            <span className="text-yellow-400 text-sm">Loading audio...</span>
-          )}
-          <button
-            onClick={clearCanvas}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-          >
-            Clear Board
-          </button>
-        </div>
-      </div>
-
       {/* Canvas - full screen */}
       <div className="flex-1 w-full h-full relative">
         <canvas
