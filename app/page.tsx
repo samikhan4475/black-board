@@ -251,20 +251,13 @@ export default function ChalkboardBliss() {
         
         // Ensure image dimensions are valid
         if (img.width > 0 && img.height > 0) {
-          // Fill full width, maintain aspect ratio
-          const scale = w / img.width;
-          const scaledWidth = w;
-          const scaledHeight = img.height * scale;
-          
-          // Center vertically if height is less than canvas, or crop from top
-          const y = scaledHeight >= h ? (h - scaledHeight) / 2 : 0;
-          
+          // Fill full width and height - stretch to fit canvas exactly
           // Use image smoothing for better quality
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
           
-          // Draw image filling full width
-          ctx.drawImage(img, 0, y, scaledWidth, scaledHeight);
+          // Draw image filling entire canvas (stretch to fit)
+          ctx.drawImage(img, 0, 0, w, h);
         }
       }
     };
@@ -386,20 +379,13 @@ export default function ChalkboardBliss() {
       
       // Ensure image dimensions are valid
       if (img.width > 0 && img.height > 0) {
-        // Fill full width, maintain aspect ratio
-        const scale = w / img.width;
-        const scaledWidth = w;
-        const scaledHeight = img.height * scale;
-        
-        // Center vertically if height is less than canvas, or crop from top
-        const y = scaledHeight >= h ? (h - scaledHeight) / 2 : 0;
-        
+        // Fill full width and height - stretch to fit canvas exactly
         // Use image smoothing for better quality
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         
-        // Draw image filling full width
-        ctx.drawImage(img, 0, y, scaledWidth, scaledHeight);
+        // Draw image filling entire canvas (stretch to fit)
+        ctx.drawImage(img, 0, 0, w, h);
       }
     }
   };
@@ -721,15 +707,17 @@ export default function ChalkboardBliss() {
       setTimeout(() => {
         const toolbar = toolbarRef.current;
         if (toolbar) {
+          const maxX = window.innerWidth - toolbar.offsetWidth - 10; // 10px padding from edge
+          const centeredX = Math.max(10, Math.min((window.innerWidth - toolbar.offsetWidth) / 2, maxX));
           setToolbarPosition({
-            x: (window.innerWidth - toolbar.offsetWidth) / 2,
-            y: 20,
+            x: centeredX,
+            y: 10, // 10px from top
           });
         } else {
           // Fallback if toolbar not rendered yet
           setToolbarPosition({
-            x: (window.innerWidth - 300) / 2,
-            y: 20,
+            x: Math.max(10, (window.innerWidth - 300) / 2),
+            y: 10,
           });
         }
       }, 100);
