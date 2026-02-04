@@ -40,6 +40,7 @@ export default function ChalkboardBliss() {
   const hasMovedRef = useRef(false);
   const havePlayedStartThisStrokeRef = useRef(false);
   const havePlayedTapThisStrokeRef = useRef(false);
+  const leftCanvasThisStrokeRef = useRef(false);
 
   const lastPosRef = useRef<Coordinates>({ x: 0, y: 0 });
   const lastTimeRef = useRef<number>(0);
@@ -340,6 +341,7 @@ export default function ChalkboardBliss() {
     hasMovedThisStrokeRef.current = false;
     havePlayedStartThisStrokeRef.current = false;
     havePlayedTapThisStrokeRef.current = false;
+    leftCanvasThisStrokeRef.current = false;
     accumulatedDistanceRef.current = 0;
 
     const ctx = canvas.getContext("2d");
@@ -481,9 +483,24 @@ export default function ChalkboardBliss() {
     if (isDrawing) {
       setIsDrawing(false);
     }
-    // Single tap only: play tap sound on pointer up when they didn't move (not on leave)
-    if (playTapOnRelease && !hasMovedThisStrokeRef.current) {
+    // Single tap only: play tap when release is over canvas, didn't move, and didn't leave first
+    const pointerStillOverCanvas =
+      canvas &&
+      e &&
+      e.clientX >= canvas.getBoundingClientRect().left &&
+      e.clientX <= canvas.getBoundingClientRect().right &&
+      e.clientY >= canvas.getBoundingClientRect().top &&
+      e.clientY <= canvas.getBoundingClientRect().bottom;
+    if (
+      playTapOnRelease &&
+      !hasMovedThisStrokeRef.current &&
+      !leftCanvasThisStrokeRef.current &&
+      pointerStillOverCanvas
+    ) {
       playTapSound();
+    }
+    if (!playTapOnRelease) {
+      leftCanvasThisStrokeRef.current = true; // so later pointer-up won't play tap
     }
     havePlayedStartThisStrokeRef.current = false;
     lastAngleRef.current = null;
