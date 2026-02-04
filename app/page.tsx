@@ -726,35 +726,54 @@ export default function ChalkboardBliss() {
   }, [showSettings]);
 
   useEffect(() => {
+    let animationFrameId: number | null = null;
+
     const handleGlobalPointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
       e.preventDefault();
-      const newX = e.clientX - dragOffset.x;
-      const newY = e.clientY - dragOffset.y;
-
-      // Constrain to viewport
-      const toolbar = toolbarRef.current;
-      if (toolbar) {
-        const maxX = window.innerWidth - toolbar.offsetWidth;
-        const maxY = window.innerHeight - toolbar.offsetHeight;
-
-        setToolbarPosition({
-          x: Math.max(0, Math.min(newX, maxX)),
-          y: Math.max(0, Math.min(newY, maxY)),
-        });
+      
+      // Use requestAnimationFrame for smooth dragging
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
       }
+      
+      animationFrameId = requestAnimationFrame(() => {
+        const newX = e.clientX - dragOffset.x;
+        const newY = e.clientY - dragOffset.y;
+
+        // Constrain to viewport with padding
+        const toolbar = toolbarRef.current;
+        if (toolbar) {
+          const padding = 10;
+          const maxX = window.innerWidth - toolbar.offsetWidth - padding;
+          const maxY = window.innerHeight - toolbar.offsetHeight - padding;
+
+          setToolbarPosition({
+            x: Math.max(padding, Math.min(newX, maxX)),
+            y: Math.max(padding, Math.min(newY, maxY)),
+          });
+        }
+      });
     };
 
     const handleGlobalPointerUp = () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       setIsDragging(false);
     };
 
     if (isDragging) {
-      window.addEventListener("pointermove", handleGlobalPointerMove);
+      window.addEventListener("pointermove", handleGlobalPointerMove, { passive: false });
       window.addEventListener("pointerup", handleGlobalPointerUp);
+      window.addEventListener("pointercancel", handleGlobalPointerUp);
       return () => {
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+        }
         window.removeEventListener("pointermove", handleGlobalPointerMove);
         window.removeEventListener("pointerup", handleGlobalPointerUp);
+        window.removeEventListener("pointercancel", handleGlobalPointerUp);
       };
     }
   }, [isDragging, dragOffset]);
@@ -796,19 +815,21 @@ export default function ChalkboardBliss() {
       {/* Unified Toolbar - Draggable on all screens */}
       <div
         ref={toolbarRef}
-        className="fixed bg-white rounded-xl md:rounded-2xl shadow-2xl p-2 md:p-4 z-50 cursor-move"
+        className="fixed bg-white rounded-lg md:rounded-xl shadow-2xl p-1.5 md:p-2.5 z-50 cursor-move select-none"
         style={{
           left: `${toolbarPosition.x}px`,
           top: `${toolbarPosition.y}px`,
           transform: "none",
+          touchAction: "none",
+          willChange: isDragging ? "transform" : "auto",
         }}
         onPointerDown={handleToolbarDragStart}
         onPointerUp={handleToolbarDragEnd}
         onPointerCancel={handleToolbarDragEnd}
       >
-        <div className="flex items-center gap-1.5 md:gap-3">
+        <div className="flex items-center gap-1 md:gap-2">
           {/* Color buttons */}
-          <div className="flex gap-1 md:gap-2">
+          <div className="flex gap-0.5 md:gap-1">
             {STROKE_COLORS.map((c) => (
               <button
                 key={c.name}
@@ -817,7 +838,7 @@ export default function ChalkboardBliss() {
                   e.stopPropagation();
                   setStrokeColor(c.value);
                 }}
-                className={`w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg border-2 transition-all ${
+                className={`w-5 h-5 md:w-8 md:h-8 rounded border-2 transition-all ${
                   strokeColor === c.value
                     ? "border-blue-500 scale-110 shadow-md"
                     : "border-gray-200 hover:border-gray-300"
@@ -829,7 +850,7 @@ export default function ChalkboardBliss() {
           </div>
 
           {/* Divider */}
-          <div className="w-px h-6 md:h-8 bg-gray-200" />
+          <div className="w-px h-5 md:h-7 bg-gray-200" />
 
           {/* Settings button */}
           <button
@@ -838,7 +859,7 @@ export default function ChalkboardBliss() {
               e.stopPropagation();
               setShowSettings(!showSettings);
             }}
-            className={`w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg flex items-center justify-center transition-colors ${
+            className={`w-6 h-6 md:w-10 md:h-10 rounded-md flex items-center justify-center transition-colors ${
               showSettings
                 ? "bg-blue-500 text-white"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -846,7 +867,7 @@ export default function ChalkboardBliss() {
             title="Settings"
           >
             <svg
-              className="w-4 h-4 md:w-6 md:h-6"
+              className="w-3.5 h-3.5 md:w-5 md:h-5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -868,11 +889,11 @@ export default function ChalkboardBliss() {
               undo();
             }}
             disabled={undoStack.length === 0}
-            className="w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-6 h-6 md:w-10 md:h-10 rounded-md flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="Undo"
           >
             <svg
-              className="w-4 h-4 md:w-6 md:h-6"
+              className="w-3.5 h-3.5 md:w-5 md:h-5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -892,11 +913,11 @@ export default function ChalkboardBliss() {
               redo();
             }}
             disabled={redoStack.length === 0}
-            className="w-7 h-7 md:w-12 md:h-12 rounded-md md:rounded-lg flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-6 h-6 md:w-10 md:h-10 rounded-md flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="Redo"
           >
             <svg
-              className="w-4 h-4 md:w-6 md:h-6"
+              className="w-3.5 h-3.5 md:w-5 md:h-5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
