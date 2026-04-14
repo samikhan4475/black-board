@@ -35,7 +35,6 @@ function hexToRgba(hex: string, alpha: number): string {
 
 const SCRATCH_FILES = [
   "scratch-tap",
-  "scratch-start",
   "scratch-slow",
   "scratch-fast",
   "scratch-wave",
@@ -53,24 +52,36 @@ export default function ChalkboardBliss() {
   const fillIntervalRef = useRef<number | null>(null);
 
   // Drawing controls (stroke color, width, opacity)
-  const [strokeColor, setStrokeColor] = useState<string>(STROKE_COLORS[0].value); // default white
-  const [strokeWidth, setStrokeWidth] = useState<number>(STROKE_WIDTHS[1].value);
+  const [strokeColor, setStrokeColor] = useState<string>(
+    STROKE_COLORS[0].value,
+  ); // default white
+  const [strokeWidth, setStrokeWidth] = useState<number>(
+    STROKE_WIDTHS[1].value,
+  );
   const [opacity, setOpacity] = useState<number>(100);
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const undoStackRef = useRef<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
   const redoStackRef = useRef<string[]>([]);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [toolbarPosition, setToolbarPosition] = useState<{
+    x: number;
+    y: number;
+  }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const lastAngleRef = useRef<number | null>(null);
   const straightScoreRef = useRef<number>(0);
   const usingStraightRef = useRef<boolean>(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const scratchBuffersRef = useRef<Partial<Record<ScratchKey, AudioBuffer>>>({});
+  const scratchBuffersRef = useRef<Partial<Record<ScratchKey, AudioBuffer>>>(
+    {},
+  );
   const scratchWaveSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const scratchWaveGainRef = useRef<GainNode | null>(null);
   const scratchStartedRef = useRef(false);
@@ -79,8 +90,6 @@ export default function ChalkboardBliss() {
   const hasMovedThisStrokeRef = useRef(false);
   const hasMovedRef = useRef(false);
   const havePlayedStartThisStrokeRef = useRef(false);
-  const havePlayedTapThisStrokeRef = useRef(false);
-  const leftCanvasThisStrokeRef = useRef(false);
 
   const lastPosRef = useRef<Coordinates>({ x: 0, y: 0 });
   const lastTimeRef = useRef<number>(0);
@@ -117,21 +126,23 @@ export default function ChalkboardBliss() {
     console.log("[sound] loading scratch WAVs...");
     Promise.all(
       SCRATCH_FILES.map((key) =>
-        decode(`/${key}.wav`, key).then((buf) => ({ key, buf }))
-      )
-    ).then((results) => {
-      const buffers: Partial<Record<ScratchKey, AudioBuffer>> = {};
-      results.forEach(({ key, buf }) => {
-        if (buf) buffers[key] = buf;
+        decode(`/${key}.wav`, key).then((buf) => ({ key, buf })),
+      ),
+    )
+      .then((results) => {
+        const buffers: Partial<Record<ScratchKey, AudioBuffer>> = {};
+        results.forEach(({ key, buf }) => {
+          if (buf) buffers[key] = buf;
+        });
+        scratchBuffersRef.current = buffers;
+        const loaded = Object.keys(buffers).length;
+        console.log(`[sound] ready: ${loaded}/${SCRATCH_FILES.length} files`);
+        setAudioReady(true);
+      })
+      .catch((err) => {
+        console.error("[sound] load failed:", err);
+        setAudioReady(true);
       });
-      scratchBuffersRef.current = buffers;
-      const loaded = Object.keys(buffers).length;
-      console.log(`[sound] ready: ${loaded}/${SCRATCH_FILES.length} files`);
-      setAudioReady(true);
-    }).catch((err) => {
-      console.error("[sound] load failed:", err);
-      setAudioReady(true);
-    });
 
     const onVisibilityChange = () => {
       tabVisibleRef.current = document.visibilityState === "visible";
@@ -168,18 +179,6 @@ export default function ChalkboardBliss() {
     const waveBuf = buffers["scratch-wave"] ?? buffers["scratch-slow"];
     if (!ctx || !waveBuf) return;
     if (ctx.state === "suspended") ctx.resume();
-
-    const startBuf = buffers["scratch-start"];
-    if (startBuf && !havePlayedStartThisStrokeRef.current) {
-      havePlayedStartThisStrokeRef.current = true;
-      const startSrc = ctx.createBufferSource();
-      startSrc.buffer = startBuf;
-      const startGain = ctx.createGain();
-      startGain.gain.value = 0.5;
-      startSrc.connect(startGain);
-      startGain.connect(ctx.destination);
-      startSrc.start(0);
-    }
 
     const waveGain = ctx.createGain();
     waveGain.gain.value = 0;
@@ -245,16 +244,16 @@ export default function ChalkboardBliss() {
       // Draw background color first
       ctx.fillStyle = DEFAULT_BG;
       ctx.fillRect(0, 0, w, h);
-      
+
       if (bgImageRef.current) {
         const img = bgImageRef.current;
-        
+
         // Ensure image dimensions are valid
         if (img.width > 0 && img.height > 0) {
           // Use image smoothing for better quality
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
-          
+
           // Both mobile and web: stretch to fill entire canvas
           ctx.drawImage(img, 0, 0, w, h);
         }
@@ -262,30 +261,79 @@ export default function ChalkboardBliss() {
     };
 
     const resizeCanvas = () => {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      // Use requestAnimationFrame to ensure layout is complete
+      requestAnimationFrame(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
 
-      // Draw background at device pixel resolution to avoid pixelation
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawBg(ctx, canvas.width, canvas.height);
-      ctx.restore();
+        // Get the actual visible size of the canvas element
+        const rect = canvas.getBoundingClientRect();
 
-      // Scale context for drawing operations
-      ctx.scale(dpr, dpr);
+        // Use visual viewport if available (better for mobile), otherwise fallback
+        const viewportHeight =
+          window.visualViewport?.height ||
+          window.innerHeight ||
+          document.documentElement.clientHeight;
+        const viewportWidth =
+          window.visualViewport?.width ||
+          window.innerWidth ||
+          document.documentElement.clientWidth;
+
+        // Use the actual rendered size, but ensure it doesn't exceed viewport
+        const actualWidth = Math.min(
+          rect.width || viewportWidth,
+          viewportWidth,
+        );
+        const actualHeight = Math.min(
+          rect.height || viewportHeight,
+          viewportHeight,
+        );
+
+        // Only resize if dimensions actually changed to avoid unnecessary redraws
+        const dpr = window.devicePixelRatio || 1;
+        const newWidth = Math.round(actualWidth * dpr);
+        const newHeight = Math.round(actualHeight * dpr);
+
+        if (canvas.width !== newWidth || canvas.height !== newHeight) {
+          canvas.width = newWidth;
+          canvas.height = newHeight;
+        }
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        // Reset transform and scale
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+
+        if (bgImageRef.current) {
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = "#1a2622";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      });
     };
 
     resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
+    // Handle mobile viewport changes
+    const handleResize = () => {
+      resizeCanvas();
+    };
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("orientationchange", handleResize);
+    // Handle mobile browser UI changes
+    window.visualViewport?.addEventListener("resize", handleResize);
     const ro = new ResizeObserver(() => resizeCanvas());
     ro.observe(canvas);
     return () => {
-      window.removeEventListener("resize", resizeCanvas);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("orientationchange", handleResize);
+      window.visualViewport?.removeEventListener("resize", handleResize);
       ro.disconnect();
     };
   }, [imageLoaded]);
@@ -317,13 +365,11 @@ export default function ChalkboardBliss() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    
     // Save current state to redo stack before undoing
     const currentState = canvas.toDataURL("image/png");
     const nextRedo = [...redoStackRef.current, currentState].slice(-MAX_UNDO);
     redoStackRef.current = nextRedo;
     setRedoStack(nextRedo);
-    
     const prev = stack[stack.length - 1];
     const img = new Image();
     img.onload = () => {
@@ -346,13 +392,11 @@ export default function ChalkboardBliss() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    
     // Save current state to undo stack before redoing
     const currentState = canvas.toDataURL("image/png");
     const nextUndo = [...undoStackRef.current, currentState].slice(-MAX_UNDO);
     undoStackRef.current = nextUndo;
     setUndoStack(nextUndo);
-    
     const next = stack[stack.length - 1];
     const img = new Image();
     img.onload = () => {
@@ -368,20 +412,23 @@ export default function ChalkboardBliss() {
     img.src = next;
   };
 
-  const drawBackground = (ctx: CanvasRenderingContext2D, w: number, h: number): void => {
+  const drawBackground = (
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+  ): void => {
     // Draw background color first
     ctx.fillStyle = DEFAULT_BG;
     ctx.fillRect(0, 0, w, h);
-    
+
     if (bgImageRef.current) {
       const img = bgImageRef.current;
-      
+
       // Ensure image dimensions are valid
       if (img.width > 0 && img.height > 0) {
         // Use image smoothing for better quality
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        
         // Both mobile and web: stretch to fill entire canvas
         ctx.drawImage(img, 0, 0, w, h);
       }
@@ -393,15 +440,24 @@ export default function ChalkboardBliss() {
     const ctx = audioContextRef.current;
     const tapBuffer = scratchBuffersRef.current["scratch-tap"];
     if (!ctx || !tapBuffer) return;
-    if (ctx.state === "suspended") ctx.resume();
 
-    const source = ctx.createBufferSource();
-    source.buffer = tapBuffer;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.6;
-    source.connect(gain);
-    gain.connect(ctx.destination);
-    source.start();
+    const doPlay = (): void => {
+      const source = ctx.createBufferSource();
+      source.buffer = tapBuffer;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.6;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      source.start();
+    };
+    if (ctx.state === "suspended") {
+      ctx
+        .resume()
+        .then(() => doPlay())
+        .catch(() => {});
+      return;
+    }
+    doPlay();
   };
 
   // Clear the stillness timer (kept for any future use; grains need no stop)
@@ -443,8 +499,13 @@ export default function ChalkboardBliss() {
 
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    const scaleX = canvas.width / dpr / rect.width;
-    const scaleY = canvas.height / dpr / rect.height;
+
+    // Canvas buffer size is canvas.width x canvas.height (in device pixels)
+    // After ctx.scale(dpr, dpr), logical drawing size is canvas.width/dpr x canvas.height/dpr
+    // CSS size is rect.width x rect.height
+    // These should match, but we'll calculate to be safe
+    const logicalWidth = canvas.width / dpr;
+    const logicalHeight = canvas.height / dpr;
 
     let clientX: number;
     let clientY: number;
@@ -456,8 +517,16 @@ export default function ChalkboardBliss() {
       clientY = e.clientY;
     }
 
-    const x = (clientX - rect.left) * scaleX;
-    const y = (clientY - rect.top) * scaleY;
+    // Get position relative to canvas in CSS pixels
+    const relativeX = clientX - rect.left;
+    const relativeY = clientY - rect.top;
+
+    // Map CSS pixel position to logical coordinates
+    // The logical size should equal the CSS size (rect), so this should be 1:1
+    // But we calculate the ratio to handle any edge cases
+    const x = (relativeX / rect.width) * logicalWidth;
+    const y = (relativeY / rect.height) * logicalHeight;
+
     return { x, y };
   };
 
@@ -473,6 +542,10 @@ export default function ChalkboardBliss() {
 
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Resume AudioContext on user gesture (required on mobile for sound to keep working)
+    const audioCtx = audioContextRef.current;
+    if (audioCtx?.state === "suspended") audioCtx.resume();
 
     // Save current state for undo (before this stroke)
     saveToHistory();
@@ -499,8 +572,6 @@ export default function ChalkboardBliss() {
 
     hasMovedThisStrokeRef.current = false;
     havePlayedStartThisStrokeRef.current = false;
-    havePlayedTapThisStrokeRef.current = false;
-    leftCanvasThisStrokeRef.current = false;
     accumulatedDistanceRef.current = 0;
 
     const ctx = canvas.getContext("2d");
@@ -517,12 +588,17 @@ export default function ChalkboardBliss() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.beginPath();
     ctx.arc(cx, cy, radiusBuffer, 0, Math.PI * 2);
-    ctx.fillStyle = fillRgba;
+    // Use selected color for tap dot
+    const alpha = opacity / 100;
+    ctx.fillStyle = hexToRgba(strokeColor, alpha * 0.7);
     ctx.fill();
     ctx.restore();
     // Start stroke path in logical space so draw() lineTo is correct
     ctx.beginPath();
     ctx.moveTo(x, y);
+
+    // Play tap sound immediately (synchronous = inside user gesture so mobile works every time)
+    playTapSound();
   };
 
   const draw = (
@@ -586,7 +662,7 @@ export default function ChalkboardBliss() {
       if (!ctx) return;
 
       const alpha = opacity / 100;
-      ctx.strokeStyle = hexToRgba(strokeColor, alpha * 0.9);
+      ctx.strokeStyle = hexToRgba(strokeColor, alpha * 0.85);
       ctx.lineWidth = strokeWidth;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -603,7 +679,8 @@ export default function ChalkboardBliss() {
           const py = lastPosRef.current.y + (y - lastPosRef.current.y) * t;
           const offsetX = (Math.random() - 0.5) * 3;
           const offsetY = (Math.random() - 0.5) * 3;
-          ctx.fillStyle = hexToRgba(strokeColor, (Math.random() * 0.3 * alpha));
+
+          ctx.fillStyle = hexToRgba(strokeColor, Math.random() * 0.3 * alpha);
           ctx.fillRect(px + offsetX, py + offsetY, particleSize, particleSize);
         }
       }
@@ -625,7 +702,11 @@ export default function ChalkboardBliss() {
     playTapOnRelease = true,
   ): void => {
     const canvas = canvasRef.current;
-    if (canvas && e?.nativeEvent?.pointerId !== undefined && canvas.releasePointerCapture) {
+    if (
+      canvas &&
+      e?.nativeEvent?.pointerId !== undefined &&
+      canvas.releasePointerCapture
+    ) {
       try {
         canvas.releasePointerCapture((e.nativeEvent as PointerEvent).pointerId);
       } catch (_) {}
@@ -641,25 +722,6 @@ export default function ChalkboardBliss() {
     isDrawingRef.current = false;
     if (isDrawing) {
       setIsDrawing(false);
-    }
-    // Single tap only: play tap when release is over canvas, didn't move, and didn't leave first
-    const pointerStillOverCanvas =
-      canvas &&
-      e &&
-      e.clientX >= canvas.getBoundingClientRect().left &&
-      e.clientX <= canvas.getBoundingClientRect().right &&
-      e.clientY >= canvas.getBoundingClientRect().top &&
-      e.clientY <= canvas.getBoundingClientRect().bottom;
-    if (
-      playTapOnRelease &&
-      !hasMovedThisStrokeRef.current &&
-      !leftCanvasThisStrokeRef.current &&
-      pointerStillOverCanvas
-    ) {
-      playTapSound();
-    }
-    if (!playTapOnRelease) {
-      leftCanvasThisStrokeRef.current = true; // so later pointer-up won't play tap
     }
     havePlayedStartThisStrokeRef.current = false;
     lastAngleRef.current = null;
@@ -690,11 +752,61 @@ export default function ChalkboardBliss() {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawBackground(ctx, canvas.width, canvas.height);
+    if (bgImageRef.current) {
+      ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.fillStyle = "#1a2622";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     ctx.restore();
   };
 
+  const takeScreenshot = (): void => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Convert canvas to data URL
+    const dataURL = canvas.toDataURL("image/png");
+
+    // Create a download link
+    const link = document.createElement("a");
+    link.download = `chalkboard-${Date.now()}.png`;
+    link.href = dataURL;
+
+    // Trigger download
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const [isMobile, setIsMobile] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Ensure container height matches viewport on mobile
+  useEffect(() => {
+    const updateContainerHeight = () => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      // Use visual viewport if available (better for mobile)
+      const vh = window.visualViewport?.height || window.innerHeight;
+      container.style.height = `${vh}px`;
+    };
+
+    updateContainerHeight();
+    window.addEventListener("resize", updateContainerHeight);
+    window.addEventListener("orientationchange", updateContainerHeight);
+    window.visualViewport?.addEventListener("resize", updateContainerHeight);
+
+    return () => {
+      window.removeEventListener("resize", updateContainerHeight);
+      window.removeEventListener("orientationchange", updateContainerHeight);
+      window.visualViewport?.removeEventListener(
+        "resize",
+        updateContainerHeight,
+      );
+    };
+  }, []);
 
   // Initialize toolbar position and detect mobile
   useEffect(() => {
@@ -706,7 +818,10 @@ export default function ChalkboardBliss() {
         const toolbar = toolbarRef.current;
         if (toolbar) {
           const maxX = window.innerWidth - toolbar.offsetWidth - 10; // 10px padding from edge
-          const centeredX = Math.max(10, Math.min((window.innerWidth - toolbar.offsetWidth) / 2, maxX));
+          const centeredX = Math.max(
+            10,
+            Math.min((window.innerWidth - toolbar.offsetWidth) / 2, maxX),
+          );
           setToolbarPosition({
             x: centeredX,
             y: 10, // 10px from top
@@ -731,12 +846,10 @@ export default function ChalkboardBliss() {
     const handleGlobalPointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
       e.preventDefault();
-      
       // Use requestAnimationFrame for smooth dragging
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
-      
       animationFrameId = requestAnimationFrame(() => {
         const newX = e.clientX - dragOffset.x;
         const newY = e.clientY - dragOffset.y;
@@ -764,7 +877,9 @@ export default function ChalkboardBliss() {
     };
 
     if (isDragging) {
-      window.addEventListener("pointermove", handleGlobalPointerMove, { passive: false });
+      window.addEventListener("pointermove", handleGlobalPointerMove, {
+        passive: false,
+      });
       window.addEventListener("pointerup", handleGlobalPointerUp);
       window.addEventListener("pointercancel", handleGlobalPointerUp);
       return () => {
@@ -795,15 +910,46 @@ export default function ChalkboardBliss() {
     setIsDragging(false);
   };
   return (
-    <div className="w-full h-screen flex flex-col bg-gray-900 relative overflow-hidden">
-      {/* Canvas - full screen */}
-      <div className="flex-1 w-full h-full relative">
+    <div
+      ref={containerRef}
+      className="w-full flex flex-col bg-gray-900 relative"
+      style={{
+        height: "100dvh",
+        width: "100vw",
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        overflow: "hidden",
+        touchAction: "none",
+      }}
+    >
+      {/* Canvas */}
+      <div
+        className="w-full"
+        style={{
+          flex: "1 1 auto",
+          minHeight: 0,
+          height: "100%",
+          width: "100%",
+          overflow: "hidden",
+          position: "relative",
+          maxHeight: "100%",
+        }}
+      >
         <canvas
           ref={canvasRef}
-          className="w-full h-full touch-none"
+          className="w-full h-full cursor-crosshair touch-none"
           style={{
-            backgroundColor: DEFAULT_BG,
-            cursor: "crosshair",
+            backgroundColor: "#1a2622",
+            display: "block",
+            width: "100%",
+            height: "100%",
+            maxWidth: "100%",
+            maxHeight: "100%",
+            boxSizing: "border-box",
+            objectFit: "contain",
           }}
           onPointerDown={startDrawing}
           onPointerMove={draw}
@@ -979,26 +1125,12 @@ export default function ChalkboardBliss() {
                 onClick={(e) => e.stopPropagation()}
                 className="w-full h-1.5 md:h-2 rounded-full appearance-none bg-gray-200 accent-blue-500"
               />
-              <p className="text-[10px] md:text-xs text-gray-500 mt-0.5">{opacity}%</p>
-            </div>
-            <div className="md:hidden">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  clearCanvas();
-                }}
-                className="w-full px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors text-xs font-medium"
-              >
-                Clear Board
-              </button>
+              <p className="text-[10px] md:text-xs text-gray-500 mt-0.5">
+                {opacity}%
+              </p>
             </div>
           </div>
         )}
-      </div>
-
-      {/* Footer - hidden on mobile */}
-      <div className="hidden md:block bg-gray-800 p-3 text-center text-sm text-gray-400">
-        By Ammar Hassan
       </div>
     </div>
   );
